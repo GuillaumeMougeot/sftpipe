@@ -218,20 +218,27 @@ class Session:
     async def mkdir(self, path: str) -> None:
         await self.call(MKDIR, _s(path), struct.pack(">I", 0))
 
+    async def isdir(self, path: str) -> bool:
+        try:
+            return (await self.stat(path)).is_dir
+        except SFTPError:
+            return False
+
     async def makedirs(self, path: str) -> None:
         """mkdir -p; tolerates concurrent creators."""
-        if path in ("", "/", "."):
-            return
         try:
             await self.mkdir(path)
         except SFTPError:
-            try:
-                if (await self.stat(path)).is_dir:
-                    return
-            except SFTPError:
-                pass
+            if await self.isdir(path):
+                return
+            if posixpath.dirname(path) in ("", "/", "."):
+                raise
             await self.makedirs(posixpath.dirname(path))
-            await self.mkdir(path)
+            try:
+                await self.mkdir(path)
+            except SFTPError:
+                if not await self.isdir(path):  # lost the race to another creator: fine
+                    raise
 
     async def listdir(self, path: str) -> list[tuple[str, Attrs]]:
         """(name, attrs) of entries but . and .. READDIRs are pipelined: paramiko returns only 16 names per call."""

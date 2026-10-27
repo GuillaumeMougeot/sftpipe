@@ -132,3 +132,14 @@ def test_pool_retries_on_session_loss_and_walks(tmp_path, monkeypatch):
 def test_failing_command_reports_stderr():
     with pytest.raises(ConnectionError, match="denied"):
         asyncio.run(Session([sys.executable, "-c", "import sys; sys.exit('denied')"]).__aenter__())
+
+
+def test_concurrent_makedirs(stdio):
+    async def race(s):
+        await asyncio.gather(*(s.makedirs("a/b/c") for _ in range(8)))  # all find a/b missing, all create it
+
+    go(stdio, race)
+    assert (stdio.root / "a/b/c").is_dir()
+    put_file(stdio.root, "f", b"")
+    with pytest.raises(SFTPError):
+        go(stdio, lambda s: s.makedirs("f/g"))  # a file in the way still fails

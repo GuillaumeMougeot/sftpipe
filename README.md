@@ -58,7 +58,7 @@ async def main():
 
 asyncio.run(main())
 ```
-`Session` also has `stat`, `listdir`, `put`, `mkdir`, `makedirs`, `rename`, `remove`, `open`, `read` and `close`. Server errors raise `SFTPError` (`errno` is the SFTP status code); a lost session raises `ConnectionError`.
+`Session` also has `stat`, `isdir`, `listdir`, `put`, `mkdir`, `makedirs`, `rename`, `remove`, `open`, `read` and `close`. Server errors raise `SFTPError` (`errno` is the SFTP status code); a lost session raises `ConnectionError`.
 
 ## The hash
 `sha1_64k` is the SHA-1 of the concatenated SHA-1 digests of consecutive 64 KiB blocks. That is what `check-file` returns, so it is computed server-side when offered, else by streaming the file; both give the same value. For local files: `sftpipe.sha1_64k_local(path)`.
