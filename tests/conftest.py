@@ -16,8 +16,11 @@ OPENSSH_SFTP = shutil.which("sftp-server", path="/usr/lib/openssh:/usr/lib:/usr/
 SSHD = shutil.which("sshd", path="/usr/sbin:/usr/bin")
 
 
+FAKE = Path(__file__).with_name("fake_sftp.py")
+
+
 def fake_cmd(root: Path) -> list[str]:
-    return [sys.executable, "-m", "sftpipe.fake", str(root)]
+    return [sys.executable, str(FAKE), str(root)]
 
 
 class Remote:
@@ -49,14 +52,14 @@ def stdio_remote(kind: str, root: Path) -> Remote:
 
 @pytest.fixture(params=["fake", "openssh"])
 def stdio(request: pytest.FixtureRequest, tmp_path: Path) -> Remote:
-    """paramiko (the ERDA stand-in) and OpenSSH's sftp-server, both spoken to over stdin/stdout."""
+    """paramiko (fake_sftp.py) and OpenSSH's sftp-server, both spoken to over stdin/stdout."""
     return stdio_remote(request.param, tmp_path / "srv")
 
 
 @pytest.fixture
 def sshd(tmp_path: Path) -> Iterator[Remote]:
-    """A real unprivileged sshd on localhost whose SFTP subsystem is sftpipe.fake: OpenSSH in front of paramiko,
-    like ERDA. sftpipe reaches it through the ssh client, as in production."""
+    """A real unprivileged sshd on localhost whose SFTP subsystem is fake_sftp.py: OpenSSH in front of paramiko, as
+    on MiG servers. sftpipe reaches it through the ssh client, as in production."""
     if not SSHD:
         pytest.skip("no sshd")
     d, root = tmp_path / "sshd", tmp_path / "srv"

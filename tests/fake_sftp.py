@@ -1,10 +1,7 @@
-"""Fake ERDA for tests: paramiko's SFTP server on stdin/stdout, as ERDA's MiG runs it behind OpenSSH.
+"""Test server: paramiko's SFTP server on stdin/stdout rooted at argv[1], as MiG (e.g. ERDA) runs it behind OpenSSH.
 
-    python -m sftpipe.fake ROOT              # needs `pip install sftpipe[fake]` (paramiko)
-    sftpipe --cmd "python -m sftpipe.fake ROOT" ls .
-
-It keeps paramiko's quirks (16 names per READDIR, buggy check-file for blocks > 64 KiB) and MiG's (rename
-overwrites). Test hooks: env SFTPIPE_FAKE_REJECT rejects sessions after VERSION, as MiG does over its session cap;
+It keeps paramiko's quirks (16 names per READDIR, check-file buggy above 64 KiB blocks) and MiG's (rename
+overwrites). Hooks: env SFTPIPE_FAKE_REJECT rejects sessions after VERSION, as MiG does over its session cap;
 env SFTPIPE_FAKE_DIE=FILE makes the first process to create FILE exit at its 3rd open (session loss).
 """
 
@@ -95,7 +92,7 @@ class Stdio:
         return self
 
     def get_log_channel(self) -> str:
-        return "sftpipe.fake"
+        return "fake_sftp"
 
     def get_hexdump(self) -> bool:
         return False

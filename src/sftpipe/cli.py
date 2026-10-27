@@ -242,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-u", "--user", default=env("SFTPIPE_USER"))
     p.add_argument("-i", "--key", default=env("SFTPIPE_KEY"), help="SSH private key")
     p.add_argument("-n", "--sessions", type=int, default=int(env("SFTPIPE_SESSIONS") or 8),
-                   help="parallel sessions (default 8); stay under the server's cap (AU ERDA: 16)")  # fmt: skip
+                   help="parallel sessions (default 8); stay under the server's per-user cap")  # fmt: skip
     p.add_argument("--ssh-opt", action="append", default=[], metavar="OPT", help="extra ssh -o option, repeatable")
     p.add_argument("--cmd", help="command speaking SFTP on stdin/stdout, instead of ssh")
     sub = p.add_subparsers(dest="command", required=True)

@@ -866,13 +866,8 @@ wheels = [
 
 [[package]]
 name = "sftpipe"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
-
-[package.optional-dependencies]
-fake = [
-    { name = "paramiko" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -885,8 +880,6 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "paramiko", marker = "extra == 'fake'", specifier = ">=3.4" }]
-provides-extras = ["fake"]
 
 [package.metadata.requires-dev]
 dev = [

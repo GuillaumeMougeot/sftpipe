@@ -28,7 +28,7 @@ def log(*msg: object) -> None:
 
 def ssh_argv(host: str, port: int | None = None, user: str | None = None, key: str | None = None,
              options: Sequence[str] = ()) -> list[str]:  # fmt: skip
-    """OpenSSH command opening an SFTP subsystem. Never prompts: failed logins can lock accounts (ERDA: 5 in 2 min)."""
+    """OpenSSH command opening an SFTP subsystem. Never prompts: on some servers failed logins lock the account."""
     argv = ["ssh", "-Txa", "-oBatchMode=yes", "-oServerAliveInterval=15", "-oLogLevel=ERROR"]
     argv += [f"-o{o}" for o in options]
     if port:
@@ -126,7 +126,7 @@ class Session:
                 name, data = b.str(), b.str()  # not ext[b.str()] = b.str(): the right side is evaluated first
                 self.ext[name] = data
             self.reader = asyncio.create_task(self._read_loop())
-            await self.stat(".")  # paramiko replies VERSION before servers like MiG (ERDA) may reject the session
+            await self.stat(".")  # paramiko replies VERSION before servers like MiG may reject the session
         except BaseException as e:  # cancellation included: never leave a half-open session behind
             await self.aclose()
             if isinstance(e, ConnectionError) or not isinstance(e, (EOFError, OSError)):
@@ -212,7 +212,7 @@ class Session:
         await self.call(REMOVE, _s(path))
 
     async def rename(self, old: str, new: str) -> None:
-        """Beware: servers differ when `new` exists (OpenSSH refuses, MiG/ERDA overwrites)."""
+        """Beware: servers differ when `new` exists (OpenSSH refuses, MiG overwrites)."""
         await self.call(RENAME, _s(old), _s(new))
 
     async def mkdir(self, path: str) -> None:
@@ -331,7 +331,7 @@ Push = Callable[[Hashable], None]
 
 class Pool:
     """Runs work over `sessions` SFTP sessions with `per` tasks each. Logins are serialized; if the first fails, no
-    other is tried; later failures back off >= 30 s (ERDA locks a user out after 5 failed logins in 2 minutes)."""
+    other is tried; later failures back off >= 30 s (some servers lock users out after a few failed logins)."""
 
     def __init__(self, argv: Sequence[str], sessions: int = 8, per: int = 4):
         self.argv, self.sessions, self.per = list(argv), sessions, per

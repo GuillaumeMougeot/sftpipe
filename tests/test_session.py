@@ -1,4 +1,4 @@
-"""Session and Pool against real servers over stdio: paramiko (ERDA stand-in) and OpenSSH's sftp-server."""
+"""Session and Pool against real servers over stdio: paramiko (fake_sftp.py) and OpenSSH's sftp-server."""
 
 import asyncio
 import os

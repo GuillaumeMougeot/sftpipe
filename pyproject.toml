@@ -1,6 +1,6 @@
 [project]
 name = "sftpipe"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fast parallel SFTP over OpenSSH: pipelined multi-session transfers, listings and server-side hashing"
 readme = "README.md"
 license = "MIT"
@@ -8,7 +8,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Guillaume Mougeot", email = "guillaume.mougeot@laposte.net" }]
 requires-python = ">=3.12"
 dependencies = []
-keywords = ["sftp", "ssh", "openssh", "parallel", "transfer", "hash", "erda"]
+keywords = ["sftp", "ssh", "openssh", "parallel", "transfer", "hash", "checksum"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -19,9 +19,6 @@ classifiers = [
     "Topic :: System :: Networking",
     "Typing :: Typed",
 ]
-
-[project.optional-dependencies]
-fake = ["paramiko>=3.4"]
 
 [project.urls]
 Repository = "https://github.com/GuillaumeMougeot/sftpipe"
@@ -46,12 +43,6 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 [tool.mypy]
 strict = true
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["sftpipe.fake"]
-disallow_subclassing_any = false
-disallow_untyped_calls = false
-warn_return_any = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
