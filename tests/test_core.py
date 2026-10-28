@@ -4,6 +4,7 @@ import hashlib
 import os
 import stat
 import struct
+import subprocess
 
 from sftpipe import BLOCK, sha1_64k_local, ssh_argv
 from sftpipe.core import Attrs, Buf, _s
@@ -33,6 +34,15 @@ def test_ssh_argv():
     for opt in (["-p", "2222"], ["-l", "me@x.dk"], ["-i", "/k"]):
         assert full[full.index(opt[0]) + 1] == opt[1]
     assert "-oIdentitiesOnly=yes" in full and "-oProxyJump=j" in full and "-oBatchMode=yes" in full
+
+
+def test_ssh_argv_password(monkeypatch):
+    monkeypatch.setenv("SFTPIPE_PASSWORD", "")  # restored after the test
+    argv = ssh_argv("h", password="pa ss'$x")
+    assert "pa ss" not in " ".join(argv) and "-oNumberOfPasswordPrompts=1" in argv and "-oBatchMode=no" in argv
+    env = dict(a.split("=", 1) for a in argv[1 : argv.index("ssh")])
+    out = subprocess.run([env["SSH_ASKPASS"]], capture_output=True, text=True, check=True).stdout
+    assert out == "pa ss'$x\n" and env["SSH_ASKPASS_REQUIRE"] == "force"
 
 
 def test_sha1_64k_local(tmp_path):

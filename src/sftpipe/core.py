@@ -1,12 +1,15 @@
 """Pipelined SFTP v3 over any SFTP-on-stdio command, by default OpenSSH (`ssh -s HOST sftp`)."""
 
 import asyncio
+import atexit
+import functools
 import hashlib
 import os
 import posixpath
 import stat
 import struct
 import sys
+import tempfile
 import time
 from asyncio.subprocess import PIPE, Process
 from collections.abc import AsyncIterator, Awaitable, Callable, Hashable, Iterable, Sequence
@@ -26,10 +29,28 @@ def log(*msg: object) -> None:
     print(time.strftime("%H:%M:%S"), *msg, file=sys.stderr, flush=True)
 
 
+@functools.cache
+def _askpass() -> str:
+    """A script printing $SFTPIPE_PASSWORD, for SSH_ASKPASS."""
+    fd, path = tempfile.mkstemp(prefix="sftpipe-askpass-")
+    os.write(fd, b"#!/bin/sh\nprintf '%s\\n' \"$SFTPIPE_PASSWORD\"\n")
+    os.close(fd)
+    os.chmod(path, 0o700)
+    atexit.register(os.remove, path)
+    return path
+
+
 def ssh_argv(host: str, port: int | None = None, user: str | None = None, key: str | None = None,
-             options: Sequence[str] = ()) -> list[str]:  # fmt: skip
-    """OpenSSH command opening an SFTP subsystem. Never prompts: on some servers failed logins lock the account."""
-    argv = ["ssh", "-Txa", "-oBatchMode=yes", "-oServerAliveInterval=15", "-oLogLevel=ERROR"]
+             options: Sequence[str] = (), password: str | None = None) -> list[str]:  # fmt: skip
+    """OpenSSH command opening an SFTP subsystem. Never prompts: on some servers failed logins lock the account.
+    A password is tried once per login, through SSH_ASKPASS and the environment (SFTPIPE_PASSWORD), never argv."""
+    auth, pre = ["-oBatchMode=yes"], []
+    if password is not None:
+        os.environ["SFTPIPE_PASSWORD"] = password
+        auth = ["-oBatchMode=no", "-oNumberOfPasswordPrompts=1"]
+        auth += ["-oPreferredAuthentications=password,keyboard-interactive"]
+        pre = ["env", f"SSH_ASKPASS={_askpass()}", "SSH_ASKPASS_REQUIRE=force"]
+    argv = [*pre, "ssh", "-Txa", *auth, "-oServerAliveInterval=15", "-oLogLevel=ERROR"]
     argv += [f"-o{o}" for o in options]
     if port:
         argv += ["-p", str(port)]

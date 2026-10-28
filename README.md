@@ -35,7 +35,7 @@ sftpipe mv --from moves.txt flat      # move into a directory, or rename one pat
 sftpipe rm -r old                     # contents in parallel, then directories; links removed, not followed
 sftpipe mkdir a/b c                   # with parents
 ```
-Connection options `-H`, `-P`, `-u`, `-i`, `-n` (sessions, default 8) and `--ssh-opt` also read `SFTPIPE_HOST`, `SFTPIPE_PORT`, `SFTPIPE_USER`, `SFTPIPE_KEY` and `SFTPIPE_SESSIONS`; the host can be a `~/.ssh/config` alias. `--verify` compares hashes after each transfer. Failed files are reported on stderr and set exit code 1. See `sftpipe COMMAND -h`.
+Connection options `-H`, `-P`, `-u`, `-i`, `-n` (sessions, default 8) and `--ssh-opt` also read `SFTPIPE_HOST`, `SFTPIPE_PORT`, `SFTPIPE_USER`, `SFTPIPE_KEY` and `SFTPIPE_SESSIONS`; the host can be a `~/.ssh/config` alias. For password logins, set `SFTPIPE_PASSWORD` (or `--password`): ssh reads it through `SSH_ASKPASS`, one try per login, and never accepts an unknown host key. `--verify` compares hashes after each transfer. Failed files are reported on stderr and set exit code 1. See `sftpipe COMMAND -h`.
 
 ## Library
 ```python

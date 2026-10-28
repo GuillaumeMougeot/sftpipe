@@ -370,6 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-P", "--port", type=int, default=env("SFTPIPE_PORT"))
     p.add_argument("-u", "--user", default=env("SFTPIPE_USER"))
     p.add_argument("-i", "--key", default=env("SFTPIPE_KEY"), help="SSH private key")
+    p.add_argument("--password", default=env("SFTPIPE_PASSWORD"), help="password login; prefer env SFTPIPE_PASSWORD")
     p.add_argument("-n", "--sessions", type=int, default=int(env("SFTPIPE_SESSIONS") or 8),
                    help="parallel sessions (default 8); stay under the server's per-user cap")  # fmt: skip
     p.add_argument("--ssh-opt", action="append", default=[], metavar="OPT", help="extra ssh -o option, repeatable")
@@ -396,7 +397,7 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
     if not (a.host or a.cmd):
         p.error("give --host (or SFTPIPE_HOST) or --cmd")
-    cmd = shlex.split(a.cmd) if a.cmd else ssh_argv(a.host, a.port, a.user, a.key, a.ssh_opt)
+    cmd = shlex.split(a.cmd) if a.cmd else ssh_argv(a.host, a.port, a.user, a.key, a.ssh_opt, a.password)
     try:
         return asyncio.run(COMMANDS[a.command](a, cmd))
     except ConnectionError as e:
