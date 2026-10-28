@@ -71,6 +71,24 @@ def test_put_refuses_existing_unless_overwrite(stdio, tmp_path):
     assert (stdio.root / "f").read_bytes() == b"new"
 
 
+@pytest.mark.parametrize("size", [0, 70 * BLOCK + 3])
+def test_copy(stdio, size):  # paramiko: streamed through the client; OpenSSH: copy-data, on the server
+    data = put_file(stdio.root, "d/f", os.urandom(size)).read_bytes()
+    put_file(stdio.root, "old", b"x")
+
+    async def ops(s):
+        assert (await s.copy("d/f", "g")).size == size
+        with pytest.raises(SFTPError):
+            await s.copy("d/f", "old")
+        with pytest.raises(SFTPError):
+            await s.copy("d", "h")
+        await s.copy("d/f", "old", overwrite=True)
+
+    go(stdio, ops)
+    assert (stdio.root / "g").read_bytes() == data == (stdio.root / "old").read_bytes()
+    assert not list(stdio.root.glob("*.part"))
+
+
 def test_dirs_rename_remove_errors(stdio):
     put_file(stdio.root, "a", b"1")
 

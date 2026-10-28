@@ -15,7 +15,7 @@ from typing import NamedTuple, Self
 # paramiko's check-file does `offset += count`: blocks > 64 KiB hash wrong ranges and spin forever at EOF on the
 # server. 64 KiB blocks are read in one chunk, which is exact. SEG caps digests per reply (server concat is O(n^2)).
 BLOCK, SEG, DEPTH = 1 << 16, 1 << 26, 64  # DEPTH: requests in flight per transfer
-INIT, VERSION, OPEN, CLOSE, READ, WRITE, FSTAT, OPENDIR, READDIR = 1, 2, 3, 4, 5, 6, 8, 11, 12
+INIT, VERSION, OPEN, CLOSE, READ, WRITE, LSTAT, FSTAT, OPENDIR, READDIR = 1, 2, 3, 4, 5, 6, 7, 8, 11, 12
 REMOVE, MKDIR, RMDIR, STAT, RENAME = 13, 14, 15, 17, 18
 STATUS, HANDLE, DATA, NAME, ATTRS, EXTENDED, EXTENDED_REPLY = 101, 102, 103, 104, 105, 200, 201
 EOF, NO_SUCH_FILE = 1, 2
@@ -205,6 +205,10 @@ class Session:
     async def stat(self, path: str) -> Attrs:
         return (await self.call(STAT, _s(path), want=ATTRS)).attrs()
 
+    async def lstat(self, path: str) -> Attrs:
+        """Like stat, but a symlink's own attributes."""
+        return (await self.call(LSTAT, _s(path), want=ATTRS)).attrs()
+
     async def fstat(self, handle: bytes) -> Attrs:
         return (await self.call(FSTAT, _s(handle), want=ATTRS)).attrs()
 
@@ -299,22 +303,57 @@ class Session:
             os.utime(local, (a.mtime, a.mtime))
         return a
 
-    async def put(self, local: str, remote: str, overwrite: bool = False) -> None:
-        """Upload a file through REMOTE.part, DEPTH writes of 64 KiB in flight, then rename it: REMOTE appears only
-        once complete. Refuses to replace an existing file unless overwrite."""
-        if (found := await self.exists(remote)) and not overwrite:
+    async def _write_new(self, path: str, overwrite: bool, fill: Callable[[bytes], Awaitable[None]]) -> None:
+        """fill(handle) of PATH.part, then rename it: PATH appears only once complete. Refuses to replace an existing
+        file unless overwrite."""
+        if (found := await self.exists(path)) and not overwrite:
             raise SFTPError(4, "exists")
-        handle = await self.open(part := f"{remote}.part", WRITE_TRUNC)
+        handle = await self.open(part := f"{path}.part", WRITE_TRUNC)
         try:
+            await fill(handle)
+        finally:
+            await self.close(handle)
+        if found:
+            await self.remove(path)
+        await self.rename(part, path)
+
+    async def put(self, local: str, remote: str, overwrite: bool = False) -> None:
+        """Upload a file, DEPTH writes of 64 KiB in flight, through REMOTE.part (see _write_new)."""
+
+        async def fill(handle: bytes) -> None:
             with open(local, "rb") as f:
                 while chunks := [(f.tell() - len(b), b) for _ in range(DEPTH) if (b := f.read(BLOCK))]:
                     writes = (self.call(WRITE, _s(handle), struct.pack(">Q", o), _s(b)) for o, b in chunks)
                     await asyncio.gather(*writes)
+
+        await self._write_new(remote, overwrite, fill)
+
+    async def copy(self, src: str, dst: str, overwrite: bool = False) -> Attrs:
+        """Copy a file on the server, through DST.part (see _write_new): within the server when it offers the
+        `copy-data` extension, else streamed through this client, DEPTH blocks in flight. Returns SRC's attrs."""
+        src_h = await self.open(src)
+        try:
+            a = await self.fstat(src_h)
+            if a.is_dir:
+                raise SFTPError(4, "is a directory")
+
+            async def fill(dst_h: bytes) -> None:
+                if "copy-data" in self.ext:
+                    args = _s(src_h), struct.pack(">QQ", 0, 0), _s(dst_h), struct.pack(">Q", 0)  # length 0: to EOF
+                    await self.call(EXTENDED, _s("copy-data"), *args)
+                    return
+
+                async def block(h: bytes, o: int, n: int) -> bytes:
+                    await self.call(WRITE, _s(dst_h), struct.pack(">Q", o), _s(await self.read(h, o, n)))
+                    return b""
+
+                async for _ in self._each(src_h, a.size, BLOCK, block):
+                    pass
+
+            await self._write_new(dst, overwrite, fill)
         finally:
-            await self.close(handle)
-        if found:
-            await self.remove(remote)
-        await self.rename(part, remote)
+            await self.close(src_h)
+        return a
 
     async def sha1_64k(self, path: str, server: bool | None = None) -> tuple[Attrs, str]:
         """(attrs, hex SHA-1 of the concatenated SHA-1 digests of consecutive 64 KiB blocks).

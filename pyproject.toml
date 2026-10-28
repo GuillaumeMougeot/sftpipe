@@ -1,6 +1,6 @@
 [project]
 name = "sftpipe"
-version = "0.4.0"
+version = "0.5.0"
 description = "Fast parallel SFTP over OpenSSH: pipelined multi-session transfers, listings and server-side hashing"
 readme = "README.md"
 license = "MIT"

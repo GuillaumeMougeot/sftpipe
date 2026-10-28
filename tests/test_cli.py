@@ -91,6 +91,35 @@ def test_mv_never_replaces(tree, tmp_path):
     assert (tree.root / "m/f.bin").read_bytes() == f_bin and (tree.root / "t/b/x/f.bin").exists()  # same target
 
 
+def test_mv_renames_a_single_source(tree):
+    assert tree.cli("mv", "t/a.mp4", "n/a2.mp4") == 0 and (tree.root / "n/a2.mp4").exists()
+    assert tree.cli("mv", "t/b/c.mp4", "n/a2.mp4") == 1 and (tree.root / "t/b/c.mp4").exists()
+
+
+def test_cp_copies_and_resumes(tree):
+    assert tree.cli("-n", "3", "cp", "-r", "--verify", "t", "t/b", "u") == 0
+    for rel in TREE:
+        assert (tree.root / "u" / rel).read_bytes() == (tree.root / rel).read_bytes()
+        assert (tree.root / "u/b" / rel.removeprefix("t/b/")).exists() or not rel.startswith("t/b/")
+    (tree.root / "u/t/a.mp4").unlink()
+    assert tree.cli("cp", "-r", "t", "u") == 0 and (tree.root / "u/t/a.mp4").exists()
+    (tree.root / "t/b/c.mp4").write_bytes(b"new")
+    assert tree.cli("cp", "-r", "t", "u") == 1  # exists with another size: kept
+    assert tree.cli("cp", "t", "u") == 1  # a directory without -r
+    assert tree.cli("cp", "-r", "t", "t/b") == 1 and not (tree.root / "t/b/t").exists()  # into itself
+    assert not list((tree.root / "u").rglob("*.part"))
+
+
+def test_rm_and_mkdir(tree, tmp_path):
+    put_file(tmp_path, "outside/keep", b"1")
+    (tree.root / "t/b/link").symlink_to(tmp_path / "outside")
+    assert tree.cli("mkdir", "x/y", "x/z") == 0 and (tree.root / "x/y").is_dir()
+    assert tree.cli("rm", "t/b") == 1 and (tree.root / "t/b").exists()  # a directory without -r
+    assert tree.cli("-n", "3", "rm", "-r", "t/a.mp4", "t/b", "x", "missing") == 1  # missing fails, the rest goes
+    assert sorted(os.listdir(tree.root)) == ["t"] and os.listdir(tree.root / "t") == []
+    assert (tmp_path / "outside/keep").exists()  # the link is removed, never followed
+
+
 def test_ls_failed_connection_prints_nothing(capsys):
     assert main(["--cmd", "false", "ls", "t"]) == 1
     assert capsys.readouterr().out == ""

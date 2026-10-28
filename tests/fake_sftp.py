@@ -48,7 +48,9 @@ class FS(SFTPServerInterface):
     def stat(self, path: str) -> SFTPAttributes:
         return SFTPAttributes.from_stat(os.stat(self.real(path)))
 
-    lstat = stat
+    @sftp_errors
+    def lstat(self, path: str) -> SFTPAttributes:  # list_folder follows links, lstat does not
+        return SFTPAttributes.from_stat(os.lstat(self.real(path)))
 
     @sftp_errors
     def open(self, path: str, flags: int, attr: SFTPAttributes) -> SFTPHandle:

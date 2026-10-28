@@ -231,18 +231,72 @@ async def put(a: argparse.Namespace, cmd: list[str]) -> int:
     return await prog.run(Pool(cmd, a.sessions), [(a.dest, tuple(a.paths))], fn)
 
 
+async def cp(a: argparse.Namespace, cmd: list[str]) -> int:
+    """Copy REMOTE files into REMOTEDIR on the server, directories with -r. As with put, targets of the source size are
+    skipped, so a rerun resumes, other existing files are kept unless --overwrite, and files go through NAME.part.
+    The data stays on the server if it offers the copy-data extension, else it streams through this host. --verify
+    compares the hashes of source and copy."""
+    prog = Progress()
+
+    async def fn(s: Session, job: tuple[str, str, str | tuple[str, ...]], push: Push) -> None:
+        dst, kind, src = job
+        try:
+            if isinstance(src, str) and kind == "file":
+                at = await s.copy(src, dst, a.overwrite)
+                if a.verify and (await s.sha1_64k(src))[1] != (await s.sha1_64k(dst))[1]:
+                    await s.remove(dst)
+                    raise SFTPError(4, "hash mismatch, copy removed")
+                prog.add(at.size)
+                return
+            await s.makedirs(dst)
+            have = {n: at.size for n, at in await s.listdir(dst) if not at.is_dir}
+            if isinstance(src, str):  # a directory
+                entries = [(posixpath.join(src, n), at) for n, at in await s.listdir(src)]
+            else:  # the command line's paths
+                found = await asyncio.gather(*(s.stat(p) for p in src), return_exceptions=True)
+                entries = []
+                for p, r in zip(src, found, strict=True):
+                    if isinstance(r, SFTPError):
+                        prog.error(p, r)
+                    elif isinstance(r, BaseException):
+                        raise r
+                    else:
+                        entries.append((p.rstrip("/"), r))
+            for p, at in entries:
+                d = posixpath.join(dst, n := posixpath.basename(p))
+                if at.is_dir and not a.recursive:
+                    prog.error(p, SFTPError(4, "is a directory, use -r"))
+                elif at.is_dir and f"{d}/".startswith(f"{p}/"):
+                    prog.error(p, SFTPError(4, "cannot copy a directory into itself"))
+                elif at.is_dir:
+                    push((d, "dir", p))
+                elif n not in have or a.overwrite:
+                    push((d, "file", p))
+                elif have[n] == at.size:
+                    prog.skipped += 1
+                else:
+                    prog.error(d, SFTPError(4, "exists with another size, use --overwrite"))
+        except SFTPError as e:
+            prog.error(dst, e)
+
+    return await prog.run(Pool(cmd, a.sessions), [(a.dest, "top", tuple(a.paths))], fn)
+
+
 async def mv(a: argparse.Namespace, cmd: list[str]) -> int:
-    """Move REMOTE files or directories into REMOTEDIR, server-side. Never replaces an existing target (some servers'
-    rename would), nor moves two sources onto one name."""
-    prog, todo = Progress(), dict[str, str]()
-    for p in all_paths(a):
-        dst = posixpath.join(a.dest, posixpath.basename(p.rstrip("/")))
+    """Move REMOTE files or directories into DEST on the server, or rename a single REMOTE to DEST if DEST is not a
+    directory. Never replaces an existing target (some servers' rename would), nor moves two sources onto one name."""
+    prog, todo, paths = Progress(), dict[str, str](), all_paths(a)
+    async with Session(cmd) as s:
+        if into := len(paths) != 1 or await s.isdir(a.dest):
+            await s.makedirs(a.dest)
+        else:
+            await s.makedirs(posixpath.dirname(a.dest.rstrip("/")) or ".")
+    for p in paths:
+        dst = posixpath.join(a.dest, posixpath.basename(p.rstrip("/"))) if into else a.dest
         if dst in todo:
             prog.error(p, SFTPError(4, f"same target as {todo[dst]}"))
         else:
             todo[dst] = p
-    async with Session(cmd) as s:
-        await s.makedirs(a.dest)
 
     async def fn(s: Session, dst: str, push: Push) -> None:
         try:
@@ -256,7 +310,57 @@ async def mv(a: argparse.Namespace, cmd: list[str]) -> int:
     return await prog.run(Pool(cmd, a.sessions), todo, fn)
 
 
-COMMANDS = {"probe": probe, "ls": ls, "hash": hash_files, "get": get, "put": put, "mv": mv}
+async def rm(a: argparse.Namespace, cmd: list[str]) -> int:
+    """Remove REMOTE files, directories with -r: their contents first, in parallel. Symlinks are removed, never
+    followed. Permanent: check the list with `ls -r` first."""
+    prog, left = Progress(), dict[str, int]()  # directory -> entries not removed yet
+
+    async def fn(s: Session, job: tuple[str, str], push: Push) -> None:
+        kind, path = job
+        try:
+            if kind == "dir" and (await s.lstat(path)).is_dir:  # listed dirs too: some servers' listings follow links
+                if not a.recursive:
+                    raise SFTPError(4, "is a directory, use -r")
+                if entries := await s.listdir(path):
+                    left[path] = len(entries)
+                    for n, at in entries:
+                        push(("dir" if at.is_dir else "file", posixpath.join(path, n)))
+                    return
+                await s.rmdir(path)
+                prog.add(0)
+            else:
+                await s.remove(path)
+                prog.add(0)
+            if (parent := posixpath.dirname(path)) in left:
+                left[parent] -= 1
+                if not left[parent]:
+                    del left[parent]
+                    push(("dir", parent))  # now empty
+        except SFTPError as e:
+            prog.error(path, e)
+
+    return await prog.run(Pool(cmd, a.sessions), [("dir", p.rstrip("/") or "/") for p in all_paths(a)], fn)
+
+
+async def mkdir(a: argparse.Namespace, cmd: list[str]) -> int:
+    """Create REMOTE directories, with their parents."""
+    async with Session(cmd) as s:
+        for p in a.paths:
+            await s.makedirs(p)
+    return 0
+
+
+COMMANDS = {
+    "probe": probe,
+    "ls": ls,
+    "hash": hash_files,
+    "get": get,
+    "put": put,
+    "cp": cp,
+    "mv": mv,
+    "rm": rm,
+    "mkdir": mkdir,
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -274,22 +378,21 @@ def main(argv: list[str] | None = None) -> int:
     for name, fn in COMMANDS.items():
         doc = fn.__doc__ or ""
         s = sub.add_parser(name, help=doc.split(". ")[0], description=doc)
-        if name == "probe":
-            continue
-        if name != "mv":
+        if name in ("ls", "hash", "get", "put", "cp", "rm"):
             s.add_argument("-r", "--recursive", action="store_true")
         if name in ("ls", "hash"):
-            s.add_argument("paths", nargs="+" if name == "ls" else "*")
             s.add_argument("-o", "--out", help="CSV file, default stdout")
-        else:
-            s.add_argument("paths", nargs="*" if name == "mv" else "+", metavar="LOCAL" if name == "put" else "REMOTE")
-            s.add_argument("dest", metavar="LOCALDIR" if name == "get" else "REMOTEDIR")
-        if name in ("get", "put"):
-            s.add_argument("--verify", action="store_true", help="compare hashes after each transfer")
-        if name in ("hash", "mv"):
+        if name in ("hash", "mv", "rm"):
             s.add_argument("--from", dest="from_file", metavar="FILE", help="more paths, one per line")
-        if name == "put":
-            s.add_argument("--overwrite", action="store_true", help="replace existing remote files")
+        if name in ("get", "put", "cp"):
+            s.add_argument("--verify", action="store_true", help="compare hashes after each transfer")
+        if name in ("put", "cp"):
+            s.add_argument("--overwrite", action="store_true", help="replace existing files")
+        if name != "probe":
+            many = "*" if name in ("hash", "mv", "rm") else "+"
+            s.add_argument("paths", nargs=many, metavar="LOCAL" if name == "put" else "REMOTE")
+        if name in ("get", "put", "cp", "mv"):
+            s.add_argument("dest", metavar={"get": "LOCALDIR", "mv": "DEST"}.get(name, "REMOTEDIR"))
     a = p.parse_args(argv)
     if not (a.host or a.cmd):
         p.error("give --host (or SFTPIPE_HOST) or --cmd")

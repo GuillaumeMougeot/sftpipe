@@ -28,7 +28,12 @@ sftpipe ls -r data -o files.csv       # path,size,mtime,dir
 sftpipe hash -r data -o hashes.csv    # path,size,mtime,sha1_64k,error; rerun to resume
 sftpipe get -r data ./local           # skips local files already of the right size
 sftpipe put -r ./results project      # skips remote files already of the right size; never overwrites unless --overwrite
-sftpipe mv --from moves.txt flat      # server-side, never replaces existing files
+
+# on the server
+sftpipe cp -r data backup             # copy; resumes like put
+sftpipe mv --from moves.txt flat      # move into a directory, or rename one path; never replaces a target
+sftpipe rm -r old                     # contents in parallel, then directories; links removed, not followed
+sftpipe mkdir a/b c                   # with parents
 ```
 Connection options `-H`, `-P`, `-u`, `-i`, `-n` (sessions, default 8) and `--ssh-opt` also read `SFTPIPE_HOST`, `SFTPIPE_PORT`, `SFTPIPE_USER`, `SFTPIPE_KEY` and `SFTPIPE_SESSIONS`; the host can be a `~/.ssh/config` alias. `--verify` compares hashes after each transfer. Failed files are reported on stderr and set exit code 1. See `sftpipe COMMAND -h`.
 
@@ -57,7 +62,7 @@ async def main():
 
 asyncio.run(main())
 ```
-`Session` also has `stat`, `exists`, `isdir`, `listdir`, `put`, `mkdir`, `makedirs`, `rmdir`, `rename`, `remove`, `open`, `read` and `close`. Server errors raise `SFTPError` (`errno` is the SFTP status code); a lost session raises `ConnectionError`.
+`Session` also has `stat`, `lstat`, `exists`, `isdir`, `listdir`, `put`, `copy`, `mkdir`, `makedirs`, `rmdir`, `rename`, `remove`, `open`, `read` and `close`. Server errors raise `SFTPError` (`errno` is the SFTP status code); a lost session raises `ConnectionError`.
 
 ## The hash
 `sha1_64k` is the SHA-1 of the concatenated SHA-1 digests of consecutive 64 KiB blocks. That is what `check-file` returns, so it is computed server-side when offered, else by streaming the file; both give the same value. For local files: `sftpipe.sha1_64k_local(path)`.
@@ -68,7 +73,8 @@ Some servers cap sessions per user and lock accounts after a few failed logins. 
 ## Design notes
 - paramiko's `check-file` hashes wrong ranges for blocks over 64 KiB and can loop forever at end of file (`offset += count`). sftpipe only asks for 64 KiB blocks with exact lengths, 64 MiB per request, since the server joins digests in quadratic time.
 - paramiko returns 16 names per READDIR, so sftpipe sends 16 READDIRs at once.
-- Transfers are written to `FILE.part` and renamed when complete, so a file of the right size is a whole file.
+- Transfers and copies are written to `FILE.part` and renamed when complete, so a file of the right size is a whole file.
+- SFTP v3 has no copy: `copy` uses the `copy-data` extension when offered (OpenSSH 9+), keeping the data on the server; otherwise it reads and writes through the client, at network speed.
 - `rename` onto an existing file fails on OpenSSH but replaces it on MiG.
 - Not yet: splitting one large file over several sessions, resuming partial files, SFTP versions above 3.
 
