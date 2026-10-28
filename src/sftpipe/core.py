@@ -19,7 +19,7 @@ INIT, VERSION, OPEN, CLOSE, READ, WRITE, FSTAT, OPENDIR, READDIR = 1, 2, 3, 4, 5
 REMOVE, MKDIR, STAT, RENAME = 13, 14, 17, 18
 STATUS, HANDLE, DATA, NAME, ATTRS, EXTENDED, EXTENDED_REPLY = 101, 102, 103, 104, 105, 200, 201
 EOF, NO_SUCH_FILE = 1, 2
-WRITE_NEW, WRITE_TRUNC = 0x02 | 0x08 | 0x20, 0x02 | 0x08 | 0x10  # WRITE CREAT, then EXCL or TRUNC
+WRITE_TRUNC = 0x02 | 0x08 | 0x10  # WRITE CREAT TRUNC
 
 
 def log(*msg: object) -> None:
@@ -218,6 +218,13 @@ class Session:
     async def mkdir(self, path: str) -> None:
         await self.call(MKDIR, _s(path), struct.pack(">I", 0))
 
+    async def exists(self, path: str) -> bool:
+        try:
+            await self.stat(path)
+            return True
+        except SFTPError:
+            return False
+
     async def isdir(self, path: str) -> bool:
         try:
             return (await self.stat(path)).is_dir
@@ -290,8 +297,11 @@ class Session:
         return a
 
     async def put(self, local: str, remote: str, overwrite: bool = False) -> None:
-        """Upload a file, DEPTH writes of 64 KiB in flight. Refuses to replace an existing file unless overwrite."""
-        handle = await self.open(remote, WRITE_TRUNC if overwrite else WRITE_NEW)
+        """Upload a file through REMOTE.part, DEPTH writes of 64 KiB in flight, then rename it: REMOTE appears only
+        once complete. Refuses to replace an existing file unless overwrite."""
+        if (found := await self.exists(remote)) and not overwrite:
+            raise SFTPError(4, "exists")
+        handle = await self.open(part := f"{remote}.part", WRITE_TRUNC)
         try:
             with open(local, "rb") as f:
                 while chunks := [(f.tell() - len(b), b) for _ in range(DEPTH) if (b := f.read(BLOCK))]:
@@ -299,6 +309,9 @@ class Session:
                     await asyncio.gather(*writes)
         finally:
             await self.close(handle)
+        if found:
+            await self.remove(remote)
+        await self.rename(part, remote)
 
     async def sha1_64k(self, path: str, server: bool | None = None) -> tuple[Attrs, str]:
         """(attrs, hex SHA-1 of the concatenated SHA-1 digests of consecutive 64 KiB blocks).

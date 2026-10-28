@@ -24,7 +24,7 @@ class Progress:
     """Counts files, bytes and errors; logs them every 10 s and at the end."""
 
     def __init__(self) -> None:
-        self.n = self.bytes = self.errors = 0
+        self.n = self.bytes = self.errors = self.skipped = 0
         self.t0 = time.monotonic()
 
     def add(self, nbytes: int) -> None:
@@ -36,7 +36,8 @@ class Progress:
 
     def __str__(self) -> str:
         mb, dt = self.bytes / 1e6, time.monotonic() - self.t0
-        return f"{self.n} files, {mb / 1e3:.2f} GB, {mb / dt:.0f} MB/s, {self.errors} errors"
+        skipped = f", {self.skipped} skipped" if self.skipped else ""
+        return f"{self.n} files, {mb / 1e3:.2f} GB, {mb / dt:.0f} MB/s{skipped}, {self.errors} errors"
 
     async def run(self, pool: Pool, items: Iterable[Any], fn: Fn) -> int:
         """pool.run with progress logs; exit code 1 if any item failed."""
@@ -69,14 +70,6 @@ def read_rows(path: str) -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
-async def exists(s: Session, path: str) -> bool:
-    try:
-        await s.stat(path)
-        return True
-    except SFTPError:
-        return False
-
-
 async def probe(a: argparse.Namespace, cmd: list[str]) -> int:
     """Log in and print the server's SFTP extensions, then open --sessions sessions one by one, stopping at the first
     refusal. Stay under the server's session cap: a refused session can count as a failed login."""
@@ -100,10 +93,11 @@ async def ls(a: argparse.Namespace, cmd: list[str]) -> int:
     """CSV path,size,mtime,dir of the given paths: directories are listed, with -r recursively."""
     prog = Progress()
     with output(a.out, "w") as f:
-        w = csv.writer(f)
-        w.writerow(["path", "size", "mtime", "dir"])
+        w, header = csv.writer(f), [["path", "size", "mtime", "dir"]]
 
         async def fn(s: Session, item: tuple[str, bool], push: Push) -> None:
+            if header:  # only once connected
+                w.writerow(header.pop())
             path, listed = item
             try:
                 if not listed and not (at := await s.stat(path)).is_dir:
@@ -195,27 +189,30 @@ async def get(a: argparse.Namespace, cmd: list[str]) -> int:
 
 
 async def put(a: argparse.Namespace, cmd: list[str]) -> int:
-    """Upload LOCAL files into REMOTEDIR, directories with -r. Existing remote files are kept unless --overwrite;
-    --verify compares hashes after each transfer."""
-    jobs: list[tuple[str, str]] = []
-    dirs, prog = {a.dest}, Progress()
-    for path in a.paths:
-        base = posixpath.join(a.dest, os.path.basename(os.path.normpath(path)))
-        if not os.path.isdir(path):
-            jobs.append((path, base))
-        elif not a.recursive:
-            prog.error(path, SFTPError(4, "is a directory, use -r"))
-        else:
-            for d, _, files in os.walk(path):
-                dirs.add(rd := posixpath.normpath(posixpath.join(base, os.path.relpath(d, path))))
-                jobs += [(os.path.join(d, n), posixpath.join(rd, n)) for n in files]
-    async with Session(cmd) as s:  # parents sort before children
-        for d in sorted(dirs):
-            await s.makedirs(d)
+    """Upload LOCAL files into REMOTEDIR, directories with -r. Each remote directory is listed once: files already
+    there with the local size are skipped, so a rerun resumes; other existing files are kept unless --overwrite.
+    Files are written to NAME.part and renamed when complete; --verify compares hashes after each transfer."""
+    prog = Progress()
 
-    async def fn(s: Session, job: tuple[str, str], push: Push) -> None:
-        local, remote = job
+    async def fn(s: Session, job: tuple[str, str | tuple[str, ...]], push: Push) -> None:
+        remote, local = job
         try:
+            if isinstance(local, tuple):  # a directory: create it, list it, queue what is missing
+                await s.makedirs(remote)
+                have = {n: at.size for n, at in await s.listdir(remote) if not at.is_dir}
+                for p in local:
+                    r = posixpath.join(remote, n := os.path.basename(os.path.normpath(p)))
+                    if os.path.isdir(p) and not a.recursive:
+                        prog.error(p, SFTPError(4, "is a directory, use -r"))
+                    elif os.path.isdir(p):
+                        push((r, tuple(os.path.join(p, c) for c in os.listdir(p))))
+                    elif n not in have or a.overwrite:
+                        push((r, p))
+                    elif have[n] == os.path.getsize(p):
+                        prog.skipped += 1
+                    else:
+                        prog.error(r, SFTPError(4, "exists with another size, use --overwrite"))
+                return
             await s.put(local, remote, a.overwrite)
             if a.verify and (await s.sha1_64k(remote))[1] != await asyncio.to_thread(sha1_64k_local, local):
                 await s.remove(remote)
@@ -224,11 +221,9 @@ async def put(a: argparse.Namespace, cmd: list[str]) -> int:
         except ConnectionError:
             raise
         except OSError as e:  # SFTPError or local file trouble
-            if isinstance(e, SFTPError) and e.errno == 4 and not a.overwrite and await exists(s, remote):
-                e = SFTPError(4, "exists, use --overwrite")
             prog.error(remote, e)
 
-    return await prog.run(Pool(cmd, a.sessions), jobs, fn)
+    return await prog.run(Pool(cmd, a.sessions), [(a.dest, tuple(a.paths))], fn)
 
 
 COMMANDS = {"probe": probe, "ls": ls, "hash": hash_files, "get": get, "put": put}

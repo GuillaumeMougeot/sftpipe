@@ -64,11 +64,23 @@ def test_put_mirrors_and_keeps_existing(tree, tmp_path):
     assert tree.cli("-n", "3", "put", "-r", "--verify", src / "t", "u") == 0
     for rel in TREE:
         assert (tree.root / "u" / rel).read_bytes() == (src / rel).read_bytes()
+    (tree.root / "u/t/b/d/f.bin").unlink()  # an interrupted run: a rerun uploads only what is missing
+    (tree.root / "u/t/a.mp4").write_bytes(b"x" * TREE["t/a.mp4"])  # same size: skipped, not compared
+    assert tree.cli("put", "-r", src / "t", "u") == 0
+    assert (tree.root / "u/t/b/d/f.bin").read_bytes() == (src / "t/b/d/f.bin").read_bytes()
+    assert (tree.root / "u/t/a.mp4").read_bytes() == b"x" * TREE["t/a.mp4"]
     (src / "t/b/c.mp4").write_bytes(b"new")
-    assert tree.cli("put", "-r", src / "t", "u") == 1  # exists: kept
+    assert tree.cli("put", "-r", src / "t", "u") == 1  # exists with another size: kept
     assert (tree.root / "u/t/b/c.mp4").read_bytes() != b"new"
     assert tree.cli("put", "-r", "--overwrite", src / "t", "u") == 0
     assert (tree.root / "u/t/b/c.mp4").read_bytes() == b"new"
+    assert tree.cli("put", src / "t", "u") == 1  # a directory without -r
+    assert not list((tree.root / "u").rglob("*.part"))
+
+
+def test_ls_failed_connection_prints_nothing(capsys):
+    assert main(["--cmd", "false", "ls", "t"]) == 1
+    assert capsys.readouterr().out == ""
 
 
 def test_probe(remote):
