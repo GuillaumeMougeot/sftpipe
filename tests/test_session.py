@@ -81,12 +81,13 @@ def test_dirs_rename_remove_errors(stdio):
         with pytest.raises(SFTPError):  # paramiko fails at open, OpenSSH at our is_dir check
             await s.sha1_64k("x")
         await s.remove("x/b")
+        await s.rmdir("x/y/z")
         with pytest.raises(SFTPError) as e:
             await s.stat("x/b")
         return e.value.errno
 
     assert go(stdio, ops) == 2  # no such file
-    assert (stdio.root / "x/y/z").is_dir() and not (stdio.root / "a").exists()
+    assert (stdio.root / "x/y").is_dir() and not (stdio.root / "x/y/z").exists() and not (stdio.root / "a").exists()
 
 
 def test_rejected_after_version(tmp_path, monkeypatch):

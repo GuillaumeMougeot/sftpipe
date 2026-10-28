@@ -78,6 +78,11 @@ class FS(SFTPServerInterface):
         os.mkdir(self.real(path))
         return SFTP_OK
 
+    @sftp_errors
+    def rmdir(self, path: str) -> int:
+        os.rmdir(self.real(path))
+        return SFTP_OK
+
 
 class Stdio:
     """The channel and transport duck type paramiko's SFTPServer needs."""

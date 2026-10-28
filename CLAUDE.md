@@ -10,7 +10,7 @@ Fast parallel SFTP over OpenSSH, library + CLI. Born in vid-dedup (gitlab.au.dk 
 
 ## Layout
 - `core.py`: Session (SFTP v3 over a subprocess, pipelined), Pool (sessions x workers, login-safe, retries), sha1_64k.
-- `cli.py`: probe, ls, hash, get, put. `tests/fake_sftp.py`: paramiko server on stdio (MiG/ERDA-like), test hooks via env.
+- `cli.py`: probe, ls, hash, get, put, mv. `tests/fake_sftp.py`: paramiko server on stdio (MiG/ERDA-like), test hooks via env.
 - `tests/`: test_core (unit), test_session (Session, Pool vs paramiko and OpenSSH sftp-server), test_cli (end to end, also through sshd).
 
 ## Invariants (learned on AU ERDA, 2026-10)

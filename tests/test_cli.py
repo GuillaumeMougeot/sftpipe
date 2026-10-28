@@ -78,6 +78,19 @@ def test_put_mirrors_and_keeps_existing(tree, tmp_path):
     assert not list((tree.root / "u").rglob("*.part"))
 
 
+def test_mv_never_replaces(tree, tmp_path):
+    (tmp_path / "list").write_text("t/b/d/f.bin\nt/b/x/f.bin\n")
+    put_file(tree.root, "t/b/x/f.bin", b"other")
+    put_file(tree.root, "t/y/z", b"")
+    put_file(tree.root, "m/c.mp4", b"keep")
+    f_bin = (tree.root / "t/b/d/f.bin").read_bytes()
+    assert tree.cli("mv", "--from", tmp_path / "list", "t/a.mp4", "t/b/c.mp4", "t/y/", "m") == 1
+    assert (tree.root / "m/a.mp4").stat().st_size == TREE["t/a.mp4"] and not (tree.root / "t/a.mp4").exists()
+    assert (tree.root / "m/y/z").exists() and not (tree.root / "t/y").exists()
+    assert (tree.root / "m/c.mp4").read_bytes() == b"keep" and (tree.root / "t/b/c.mp4").exists()  # target exists
+    assert (tree.root / "m/f.bin").read_bytes() == f_bin and (tree.root / "t/b/x/f.bin").exists()  # same target
+
+
 def test_ls_failed_connection_prints_nothing(capsys):
     assert main(["--cmd", "false", "ls", "t"]) == 1
     assert capsys.readouterr().out == ""

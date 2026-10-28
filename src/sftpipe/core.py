@@ -16,7 +16,7 @@ from typing import NamedTuple, Self
 # server. 64 KiB blocks are read in one chunk, which is exact. SEG caps digests per reply (server concat is O(n^2)).
 BLOCK, SEG, DEPTH = 1 << 16, 1 << 26, 64  # DEPTH: requests in flight per transfer
 INIT, VERSION, OPEN, CLOSE, READ, WRITE, FSTAT, OPENDIR, READDIR = 1, 2, 3, 4, 5, 6, 8, 11, 12
-REMOVE, MKDIR, STAT, RENAME = 13, 14, 17, 18
+REMOVE, MKDIR, RMDIR, STAT, RENAME = 13, 14, 15, 17, 18
 STATUS, HANDLE, DATA, NAME, ATTRS, EXTENDED, EXTENDED_REPLY = 101, 102, 103, 104, 105, 200, 201
 EOF, NO_SUCH_FILE = 1, 2
 WRITE_TRUNC = 0x02 | 0x08 | 0x10  # WRITE CREAT TRUNC
@@ -217,6 +217,9 @@ class Session:
 
     async def mkdir(self, path: str) -> None:
         await self.call(MKDIR, _s(path), struct.pack(">I", 0))
+
+    async def rmdir(self, path: str) -> None:
+        await self.call(RMDIR, _s(path))
 
     async def exists(self, path: str) -> bool:
         try:

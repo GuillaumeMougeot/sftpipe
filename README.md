@@ -28,6 +28,7 @@ sftpipe ls -r data -o files.csv       # path,size,mtime,dir
 sftpipe hash -r data -o hashes.csv    # path,size,mtime,sha1_64k,error; rerun to resume
 sftpipe get -r data ./local           # skips local files already of the right size
 sftpipe put -r ./results project      # skips remote files already of the right size; never overwrites unless --overwrite
+sftpipe mv --from moves.txt flat      # server-side, never replaces existing files
 ```
 Connection options `-H`, `-P`, `-u`, `-i`, `-n` (sessions, default 8) and `--ssh-opt` also read `SFTPIPE_HOST`, `SFTPIPE_PORT`, `SFTPIPE_USER`, `SFTPIPE_KEY` and `SFTPIPE_SESSIONS`; the host can be a `~/.ssh/config` alias. `--verify` compares hashes after each transfer. Failed files are reported on stderr and set exit code 1. See `sftpipe COMMAND -h`.
 
@@ -56,7 +57,7 @@ async def main():
 
 asyncio.run(main())
 ```
-`Session` also has `stat`, `isdir`, `listdir`, `put`, `mkdir`, `makedirs`, `rename`, `remove`, `open`, `read` and `close`. Server errors raise `SFTPError` (`errno` is the SFTP status code); a lost session raises `ConnectionError`.
+`Session` also has `stat`, `exists`, `isdir`, `listdir`, `put`, `mkdir`, `makedirs`, `rmdir`, `rename`, `remove`, `open`, `read` and `close`. Server errors raise `SFTPError` (`errno` is the SFTP status code); a lost session raises `ConnectionError`.
 
 ## The hash
 `sha1_64k` is the SHA-1 of the concatenated SHA-1 digests of consecutive 64 KiB blocks. That is what `check-file` returns, so it is computed server-side when offered, else by streaming the file; both give the same value. For local files: `sftpipe.sha1_64k_local(path)`.

@@ -65,6 +65,12 @@ def output(path: str | None, mode: str) -> Iterator[IO[Any]]:
             yield f
 
 
+def all_paths(a: argparse.Namespace) -> list[str]:
+    """PATHS then the lines of --from, deduplicated."""
+    more = Path(a.from_file).read_text().splitlines() if a.from_file else []
+    return [p for p in dict.fromkeys([*a.paths, *more]) if p]
+
+
 def read_rows(path: str) -> list[dict[str, str]]:
     with open(path, newline="") as f:
         return list(csv.DictReader(f))
@@ -118,7 +124,6 @@ async def ls(a: argparse.Namespace, cmd: list[str]) -> int:
 async def hash_files(a: argparse.Namespace, cmd: list[str]) -> int:
     """CSV path,size,mtime,sha1_64k,error; server-side when the server offers check-file. With --out, rows are
     appended as they come, a rerun skips hashed paths, and the file is sorted at the end."""
-    paths = [*a.paths, *(Path(a.from_file).read_text().splitlines() if a.from_file else [])]
     old = os.path.exists(a.out) if a.out else False
     done = {r["path"] for r in read_rows(a.out) if r["sha1_64k"]} if old else set()
     prog = Progress()
@@ -146,7 +151,7 @@ async def hash_files(a: argparse.Namespace, cmd: list[str]) -> int:
                 prog.error(path, e)
             f.flush()
 
-        items = [(p, None) for p in dict.fromkeys(paths) if p and p not in done]
+        items = [(p, None) for p in all_paths(a) if p not in done]
         code = await prog.run(Pool(cmd, a.sessions), items, fn)
     if a.out:
         rows = {r["path"]: r for r in read_rows(a.out)}  # the last row of a path wins
@@ -226,7 +231,32 @@ async def put(a: argparse.Namespace, cmd: list[str]) -> int:
     return await prog.run(Pool(cmd, a.sessions), [(a.dest, tuple(a.paths))], fn)
 
 
-COMMANDS = {"probe": probe, "ls": ls, "hash": hash_files, "get": get, "put": put}
+async def mv(a: argparse.Namespace, cmd: list[str]) -> int:
+    """Move REMOTE files or directories into REMOTEDIR, server-side. Never replaces an existing target (some servers'
+    rename would), nor moves two sources onto one name."""
+    prog, todo = Progress(), dict[str, str]()
+    for p in all_paths(a):
+        dst = posixpath.join(a.dest, posixpath.basename(p.rstrip("/")))
+        if dst in todo:
+            prog.error(p, SFTPError(4, f"same target as {todo[dst]}"))
+        else:
+            todo[dst] = p
+    async with Session(cmd) as s:
+        await s.makedirs(a.dest)
+
+    async def fn(s: Session, dst: str, push: Push) -> None:
+        try:
+            if await s.exists(dst):
+                raise SFTPError(4, f"{dst} exists")
+            await s.rename(todo[dst], dst)
+            prog.add(0)
+        except SFTPError as e:
+            prog.error(todo[dst], e)
+
+    return await prog.run(Pool(cmd, a.sessions), todo, fn)
+
+
+COMMANDS = {"probe": probe, "ls": ls, "hash": hash_files, "get": get, "put": put, "mv": mv}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -246,15 +276,17 @@ def main(argv: list[str] | None = None) -> int:
         s = sub.add_parser(name, help=doc.split(". ")[0], description=doc)
         if name == "probe":
             continue
-        s.add_argument("-r", "--recursive", action="store_true")
+        if name != "mv":
+            s.add_argument("-r", "--recursive", action="store_true")
         if name in ("ls", "hash"):
             s.add_argument("paths", nargs="+" if name == "ls" else "*")
             s.add_argument("-o", "--out", help="CSV file, default stdout")
         else:
-            s.add_argument("paths", nargs="+", metavar="REMOTE" if name == "get" else "LOCAL")
+            s.add_argument("paths", nargs="*" if name == "mv" else "+", metavar="LOCAL" if name == "put" else "REMOTE")
             s.add_argument("dest", metavar="LOCALDIR" if name == "get" else "REMOTEDIR")
+        if name in ("get", "put"):
             s.add_argument("--verify", action="store_true", help="compare hashes after each transfer")
-        if name == "hash":
+        if name in ("hash", "mv"):
             s.add_argument("--from", dest="from_file", metavar="FILE", help="more paths, one per line")
         if name == "put":
             s.add_argument("--overwrite", action="store_true", help="replace existing remote files")
